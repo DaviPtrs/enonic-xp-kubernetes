@@ -1,0 +1,40 @@
+apiVersion: v1
+data:
+  com.enonic.xp.cluster.cfg: |
+    cluster.enabled=true
+    network.host = _eth0_
+    network.publish.host = _eth0_
+  com.enonic.xp.elasticsearch.cfg: |
+    cluster.name = giro-cluster
+    discovery.unicast.sockets = giropops-service.girons.svc.cluster.local
+  com.enonic.xp.hazelcast.cfg: |
+
+    clusterConfigDefaults=false
+
+    network.join.kubernetes.enabled=true
+
+    network.join.kubernetes.serviceDns=giropops-service.girons.svc.cluster.local
+
+    network.join.tcpIp.enabled=false
+
+    # Initial expected cluster size to wait before node to start completely
+    system.hazelcast.initial.min.cluster.size=1
+
+  com.enonic.xp.web.sessionstore.cfg: |
+    #replicated or non-persistent
+    storeMode = replicated
+
+    # Controls whether a session that is newly created will be immediately (true)
+    # or lazily (false) persisted as the last request for the session exits.
+    # Has no effect in non-persistent storeMode.
+    saveOnCreate = true
+
+    # Controls whether a session that is changed ("dirty") will be persisted as the response is about to commit.
+    # If false, a dirty session will only be persisted when the last simultaneous request for it leaves the session.
+    # Has no effect in non-persistent storeMode.
+    flushOnResponseCommit = true
+
+kind: ConfigMap
+metadata:
+  name: giropops-config
+  namespace: girons
