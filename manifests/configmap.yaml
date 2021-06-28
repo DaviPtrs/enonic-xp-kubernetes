@@ -5,15 +5,20 @@ data:
     network.host = _eth0_
     network.publish.host = _eth0_
   com.enonic.xp.elasticsearch.cfg: |
-    discovery.unicast.sockets = giropops-service.girons.svc.cluster.local
+    node.data = true
+    node.master = true
+
+    discovery.unicast.sockets = giropops-intra-service.girons.svc.cluster.local
   com.enonic.xp.hazelcast.cfg: |
     clusterConfigDefaults = false
 
     network.join.kubernetes.enabled = true
 
-    network.join.kubernetes.serviceDns = giropops-service.girons.svc.cluster.local
+    network.join.kubernetes.serviceDns = giropops-intra-service.girons.svc.cluster.local
 
     network.join.tcpIp.enabled = false
+
+    network.restApi.enabled = true
 
     # Initial expected cluster size to wait before node to start completely
     system.hazelcast.initial.min.cluster.size = 1
@@ -30,6 +35,11 @@ data:
     # If false, a dirty session will only be persisted when the last simultaneous request for it leaves the session.
     # Has no effect in non-persistent storeMode.
     flushOnResponseCommit = true
+  system.properties: |-
+    xp.suPassword = password
+    #
+
+
 kind: ConfigMap
 metadata:
   creationTimestamp: null
