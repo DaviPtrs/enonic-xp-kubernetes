@@ -28,11 +28,19 @@ spec:
               name: snapshots
             - mountPath: /enonic-xp/home/data/
               name: data
+            - mountPath: /enonic-xp/home/deploy/
+              name: deploy
           livenessProbe:
             httpGet:
-              path: /cluster.elasticsearch
+              path: /cluster.manager
               port: 2609
             failureThreshold: 2
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /cluster.manager
+              port: 2609
             initialDelaySeconds: 30
             periodSeconds: 10
       terminationGracePeriodSeconds: 180
@@ -49,3 +57,6 @@ spec:
         - name: data
           persistentVolumeClaim:
             claimName: giropops-data
+        - name: deploy
+          persistentVolumeClaim:
+            claimName: giropops-deploy

@@ -36,9 +36,20 @@ data:
     # Has no effect in non-persistent storeMode.
     flushOnResponseCommit = true
   system.properties: |-
-    xp.suPassword = password
-    #
+    xp.suPassword = samplepass
+    xp.init.adminUserCreation = false
 
+  com.enonic.xp.web.vhost.cfg: |-
+    enabled = true
+
+    mapping.site.host = app.example.com
+    mapping.site.source = /
+    mapping.site.target = /site/default/master/example
+
+    mapping.admin.host = app.example.com
+    mapping.admin.source = /admin
+    mapping.admin.target = /admin
+    mapping.admin.idProvider.system = default
 
 kind: ConfigMap
 metadata:

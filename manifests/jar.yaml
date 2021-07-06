@@ -1,0 +1,14 @@
+apiVersion: kopf.enonic/v1
+kind: EnonicXpApp
+metadata:
+  name: giropops
+  namespace: girons
+spec:
+  secret_name: bucket-secret
+  pvc_name: deploy-pvc
+  bucket:
+    url: s3.example.com
+    url_sufix: sample-project/master
+  object:
+    prefix: "sample-project-"
+    name: sample-project-1.1.0.jar
