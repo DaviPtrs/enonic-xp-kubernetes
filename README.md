@@ -5,9 +5,6 @@ This is a full guide, based on my 6+ months of experience trying to make this Fr
 - [Enonic XP on Kubernetes (Full Guide) (Unofficial)](#enonic-xp-on-kubernetes-full-guide-unofficial)
   - [Enonic Operator for Kubernetes](#enonic-operator-for-kubernetes)
   - [Before starting](#before-starting)
-  - [Packing the application with Docker](#packing-the-application-with-docker)
-    - [Dockerfile](#dockerfile)
-    - [Building and Pushing](#building-and-pushing)
   - [Shared directories](#shared-directories)
     - [NFS solutions](#nfs-solutions)
     - [Directories](#directories)
@@ -20,6 +17,8 @@ This is a full guide, based on my 6+ months of experience trying to make this Fr
     - [com.enonic.xp.elasticsearch.cfg](#comenonicxpelasticsearchcfg)
     - [com.enonic.xp.hazelcast.cfg](#comenonicxphazelcastcfg)
     - [com.enonic.xp.web.sessionstore.cfg](#comenonicxpwebsessionstorecfg)
+    - [com.enonic.xp.web.vhost.cfg](#comenonicxpwebvhostcfg)
+    - [system.properties](#systemproperties)
   - [Applying configuration](#applying-configuration)
     - [Creating ConfigMap](#creating-configmap)
     - [Creating ConfigMap (manifest only)](#creating-configmap-manifest-only)
@@ -28,9 +27,11 @@ This is a full guide, based on my 6+ months of experience trying to make this Fr
     - [Explanation](#explanation)
       - [Annotations](#annotations)
       - [Liveness Probe](#liveness-probe)
+      - [Readiness Probe](#readiness-probe)
       - [Termination Grace Period](#termination-grace-period)
       - [Volumes](#volumes)
       - [Volume Mounts](#volume-mounts)
+  - [Installing applications](#installing-applications)
   - [Using Ingress](#using-ingress)
   - [Troubleshooting](#troubleshooting)
   - [Contribute](#contribute)
@@ -50,43 +51,6 @@ We will deploy all our resources on another namespace, which I called `girons`, 
 ```bash
 kubectl create ns girons
 ```
-
-## Packing the application with Docker
-### Dockerfile
-
-First, you have to create a Docker image with your application .jar inside, then push it to a Docker registry.
-
-Inside the docker folder on this repository, you will see a file called `Dockerfile` with the following contents
-
-```Dockerfile
-FROM enonic/xp:7.5.0-ubuntu
-
-COPY *.jar $XP_HOME/deploy
-```
-
-This will download the official Enonic base image, and then copy all .jar files to the deploy folder. 
-
-If you want to change the XP version, just change `7.5.0` to another version **above** `7.4.1`.
-
-**DON'T set any environment variable inside Dockerfile**. You actually can set environment variables, but this is **definitely not** a good practice, since you don't want to rebuild your Docker image every time you change any variable. You'll see a good way to do this in [Deployment](##Deployment) section.
-
-### Building and Pushing
-
-To build and push the image, replace `daviptrs/xp-example:latest` with your image name
-
-```bash
-cd docker/
-docker build . -t daviptrs/xp-example:latest
-docker push daviptrs/xp-example:latest
-```
-
-To learn how to use a Docker registry, here are some links that might help you
-
--   https://ropenscilabs.github.io/r-docker-tutorial/04-Dockerhub.html
--   https://aws.amazon.com/pt/ecr/
--   https://docs.gitlab.com/ee/user/packages/container_registry/
--   https://cloud.google.com/container-registry
-
 ## Shared directories
 
 According to the ["clustering storage" section on Enonic docs](https://developer.enonic.com/docs/xp/stable/deployment/clustering#storage), Enonic XP needs a shared file system to share directories for all replicas. 
@@ -114,6 +78,12 @@ According to [this](https://developer.enonic.com/docs/xp/stable/deployment/clust
 -   $XP_HOME/data
     
     Contains other data (e.g. system dumps).
+
+-   $XP_HOME/deploy
+
+    Contains the cluster-wide installed applications.
+  
+**Disclaimer**: The deploy folder usually should not be shared, but we'll take another way. The deploy folder needs to be shared so the operator can install a desired jar file inside the Deploy volume.
 
 So for them, we will create PVCs, to request volumes to our NFS solutions and then, we will attach them on those directories.
 
@@ -168,13 +138,28 @@ spec:
     requests:
       storage: 3Gi
 
+---
+
+kind: PersistentVolumeClaim
+apiVersion: v1
+metadata:
+  name: giropops-deploy
+  namespace: girons
+  annotations:
+    volume.beta.kubernetes.io/storage-class: "managed-nfs-storage"
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 400Mi
 ```
 
 As you can see, for which directory, I created a PVC, requesting 3GBs storage from my NFS storage class, you of course might change this value according to your needs.
 
 ## Headless service
 
-As you have to do with most StatefulSet objects, you will set a Headless Service, which is a service without a single Service IP or load-balancing. 
+As you have to do with most StatefulSet objects, you will set a Headless Service, which is a service without a single Service IP or load-balancing. This service will be used by the cluster to communicate with its replicas. We also need to set up another service, that will be used by the ingress controller and allows the clients to access the application.
 
 ### Service DNS
 
@@ -186,30 +171,49 @@ The service can be used to reach all replicas by internal DNS record, this DNS f
 
 `<cluster-domain>` is usually equals to `cluster.local`
 
-In our example case, as our service will be called "giropops-service" and namespace are "girons", will be:
+In our example case, as our service will be called "giropops-intra-service" and namespace are "girons", will be:
 
 ```
-giropops-service.girons.svc.cluster.local
+giropops-intra-service.girons.svc.cluster.local
 ```
 
 ### Manifest
 
-This is our service example, which will use "name: giropops" to select the application statefulset
+This is our services example, which will use "name: giropops" to select the application statefulset
 
 ```yaml
+# ---------- Exposer service ------------
 apiVersion: v1
 kind: Service
 metadata:
   name: giropops-service
   namespace: girons
 spec:
-  clusterIP: None
   selector:
     name: giropops
   ports:
   - name:  xp-port
     port:  8080
     targetPort:  8080
+
+---
+# ---------- Internal service ------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: giropops-intra-service
+  namespace: girons
+spec:
+  clusterIP: None
+  selector:
+    name: giropops
+  ports:
+    - port: 5701
+      name: hazelcast
+    - port: 9300
+      name: elasticsearch
+  type: ClusterIP
+  publishNotReadyAddresses: true
 ```
 
 The main thing here to define our service as a headless service is setting `None` on clusterIp key
@@ -239,7 +243,7 @@ network.publish.host = _eth0_
 Replace with your application service DNS. If you don't know what I'm talking about, see [this section](#headless-service)
 
 ```conf
-discovery.unicast.sockets = giropops-service.girons.svc.cluster.local
+discovery.unicast.sockets = giropops-intra-service.girons.svc.cluster.local
 ```
 
 ### com.enonic.xp.hazelcast.cfg
@@ -251,7 +255,7 @@ clusterConfigDefaults = false
 
 network.join.kubernetes.enabled = true
 
-network.join.kubernetes.serviceDns = giropops-service.girons.svc.cluster.local
+network.join.kubernetes.serviceDns = giropops-intra-service.girons.svc.cluster.local
 
 network.join.tcpIp.enabled = false
 
@@ -264,14 +268,44 @@ system.hazelcast.initial.min.cluster.size = 1
 For this one there are some options that maybe you want to change according to your needs. The only mandatory setting is `storeMode = replicated`, the others can be changed without affecting the cluster health. See [Enonic Config Docs](https://developer.enonic.com/docs/xp/stable/deployment/config#sessionstore) for more info.
 
 ```conf
-    # Required
-    storeMode = replicated
+# Required
+storeMode = replicated
 
-    # Can be changed | Optional
-    saveOnCreate = true
+# Can be changed | Optional
+saveOnCreate = true
 
-    # Can be changed | Optional
-    flushOnResponseCommit = true
+# Can be changed | Optional
+flushOnResponseCommit = true
+```
+
+### com.enonic.xp.web.vhost.cfg
+
+You should also configure the vhosts, see the [official docs reference](https://developer.enonic.com/docs/xp/stable/deployment/config#vhost). You can use the following example
+
+
+```conf
+enabled = true
+
+mapping.site.host = app.example.com
+mapping.site.source = /
+mapping.site.target = /site/default/master/example
+
+mapping.admin.host = app.example.com
+mapping.admin.source = /admin
+mapping.admin.target = /admin
+mapping.admin.idProvider.system = default
+```
+
+### system.properties
+
+The operator can only reach our application (to perform stability tasks) if it knows how to authenticate to the cluster, so you must define a superuser password, which will be the same as you need to put on a secret on the Enonic operator's tutorial.
+
+
+```conf
+xp.suPassword = samplepass
+
+# Optional but recommended
+xp.init.adminUserCreation = false
 ```
 
 ## Applying configuration
@@ -319,6 +353,7 @@ kubectl create configmap -n girons giropops-config --from-file=config \
 If you did everything right, this will be your StatefulSet YAML Manifest
 
 ```yaml
+# ---------- Deploy ------------
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -348,11 +383,19 @@ spec:
               name: snapshots
             - mountPath: /enonic-xp/home/data/
               name: data
+            - mountPath: /enonic-xp/home/deploy/
+              name: deploy
           livenessProbe:
             httpGet:
-              path: /cluster.elasticsearch
+              path: /cluster.manager
               port: 2609
             failureThreshold: 2
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /cluster.manager
+              port: 2609
             initialDelaySeconds: 30
             periodSeconds: 10
       terminationGracePeriodSeconds: 180
@@ -369,6 +412,9 @@ spec:
         - name: data
           persistentVolumeClaim:
             claimName: giropops-data
+        - name: deploy
+          persistentVolumeClaim:
+            claimName: giropops-deploy
 ```
 
 ### Explanation
@@ -400,6 +446,19 @@ This will make sure that the cluster is healthy, if it is not, the container wil
               path: /cluster.elasticsearch
               port: 2609
             failureThreshold: 2
+            initialDelaySeconds: 30
+            periodSeconds: 10
+```
+
+#### Readiness Probe
+
+This will make sure that the replica is ready before being added to the main service, if it is not, the container will be restarted. This prevents unready instances to be served to clients and also helps the scaling process, so this probe is critical, don't decrease those parameters unless you know exactly what you are doing.
+
+```yaml
+          readinessProbe:
+            httpGet:
+              path: /cluster.manager
+              port: 2609
             initialDelaySeconds: 30
             periodSeconds: 10
 ```
@@ -446,7 +505,33 @@ Mounting all the shared volumes according to [this section](#directories) and th
               name: snapshots
             - mountPath: /enonic-xp/home/data/
               name: data
+            - mountPath: /enonic-xp/home/deploy/
+              name: deploy
 ```
+
+## Installing applications
+
+The Enonic operator comes with a custom resource that allows you to install applications by downloading their .jar files from an S3 bucket, to learn how to set up it, see [this section of the operator's doc](https://github.com/DaviPtrs/enonic-operator-k8s#installing-jar-files-from-an-s3-bucket).
+
+For this application, we will be using the following example, which is the `jar.yaml` manifest.
+
+```yaml
+apiVersion: kopf.enonic/v1
+kind: EnonicXpApp
+metadata:
+  name: giropops
+  namespace: girons
+spec:
+  secret_name: bucket-secret
+  pvc_name: deploy-pvc
+  bucket:
+    url: s3.example.com
+    url_sufix: sample-project/master
+  object:
+    prefix: "sample-project-"
+    name: sample-project-1.1.0.jar
+```
+
 
 ## Using Ingress
 

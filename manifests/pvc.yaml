@@ -43,3 +43,19 @@ spec:
   resources:
     requests:
       storage: 3Gi
+
+---
+
+kind: PersistentVolumeClaim
+apiVersion: v1
+metadata:
+  name: giropops-deploy
+  namespace: girons
+  annotations:
+    volume.beta.kubernetes.io/storage-class: "managed-nfs-storage"
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 400Mi
